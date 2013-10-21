@@ -7,7 +7,7 @@ Tributary.FilesView = Backbone.View.extend({
 
     var template = Handlebars.templates.files;
     var config = this.model;
-    
+
     //render all the file tabs
     //var contexts = _.map(this.model.contexts, function(ctx) { return ctx.model.toJSON(); });
     var contexts = _.map(config.contexts, function(ctx) { return ctx.model.toJSON(); });
@@ -55,15 +55,16 @@ Tributary.FilesView = Backbone.View.extend({
         //delete the editor
         context.model.trigger("delete");
 
-        var ind = config.contexts.indexOf(context);
-        config.contexts.splice(ind,1);
-        delete context;
-
         if(!config.todelete) {
           config.todelete = [];
         }
-        config.todelete.push(filename);
+        if(!context.newFile)
+          config.todelete.push(filename);
 
+
+        var ind = config.contexts.indexOf(context);
+        config.contexts.splice(ind,1);
+        delete context;
 
         //remove the tab
         d3.select(that.el).selectAll("li.file")
@@ -74,6 +75,7 @@ Tributary.FilesView = Backbone.View.extend({
           })
 
         //show the first context available
+        config.contexts.forEach(function(c) { return c.model.trigger("hide") })
         var othertab = config.contexts[0].model;
         othertab.trigger("show");
         d3.event.stopPropagation();
@@ -97,6 +99,7 @@ Tributary.FilesView = Backbone.View.extend({
             //create a new file with the given name
             var context = Tributary.makeContext({ filename: input.node().value, config: config });
             if(context) {
+              context.newFile = true;
               config.contexts.push(context);
               context.render();
               context.execute();

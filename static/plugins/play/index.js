@@ -54,11 +54,11 @@ function tributaryPlayPlugin(tributary, plugin) {
   plugin.deactivate = function() {
     el = document.getElementById(plugin.elId);
     el.innerHTML = "";
-    
+
     tributary.pause = true;
     var configDiv = d3.select("#config-content");
     var timecontrolsDiv = configDiv.select(".timecontrols").remove();
-    
+
     //remove all the stuff we added to tributary
     destroy();
   }
@@ -114,7 +114,10 @@ function tributaryPlayPlugin(tributary, plugin) {
         tributary.t = parseFloat(this.value);//$('#slider').attr('value');
         if(tributary.pause){
           //only want to run code if we aren't already playing
-          tributary.execute();    
+          tributary.execute();
+        }
+        if(tributary.__animating__) {
+          tributary.events.trigger("execute")
         }
       });
       config.on("tick", function(t) {
@@ -213,6 +216,20 @@ function tributaryPlayPlugin(tributary, plugin) {
         tributary.run(tributary.g, t, 0);
       }
     }
+    //TODO: enale loop and ease to be individually set
+    tributary.anim = function(min, max, options) {
+      tributary.__animating__ = true;
+      if(!min) min = 0;
+      if(!max && !(max === 0)) max = 1;
+      if(!options) options = {};
+      if(!options.interpolate) options.interpolate = d3.interpolate;
+      if(!options.ease) options.ease = tributary.ease;
+      //if(!loop) loop = tributary.loop_type;
+      var t = options.ease(tributary.t);
+      return d3.scale.linear()
+        .range([min, max])
+        .interpolate(options.interpolate)(t);
+    }
 
     d3.timer(timerFunction);
     function timerFunction() {
@@ -224,7 +241,7 @@ function tributaryPlayPlugin(tributary, plugin) {
       var now = new Date();
       var dtime = now - tributary.timer.then;
       var dt;
-            
+
       //TODO: implement play button, should reset the timer
       if(tributary.loop) {
         if (tributary.reverse) {
@@ -267,11 +284,15 @@ function tributaryPlayPlugin(tributary, plugin) {
         tributary.t += tributary.dt;
       }
       
-      try {
-        tributary.execute();
-        tributary.__config__.trigger("noerror");
-      } catch (err) {
-        tributary.__config__.trigger("error", err);
+      if(tributary.__animating__) {
+        tributary.events.trigger("execute");
+      } else {
+        try {
+          tributary.execute();
+          tributary.__config__.trigger("noerror");
+        } catch (err) {
+          tributary.__config__.trigger("error", err);
+        }
       }
       tributary.__config__.trigger("tick", tributary.t);
     }
@@ -286,7 +307,7 @@ function tributaryPlayPlugin(tributary, plugin) {
       if(tributary.bv) {
         makeClones();
       } else {
-        tributary.g = tributary.__svg__;
+        if(tributary.__svg__) tributary.g = tributary.__svg__;
       }
     });
   }

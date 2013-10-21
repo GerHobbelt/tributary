@@ -7,7 +7,7 @@ tributary.CodeModel = Backbone.Model.extend({
     code: "",
     filename: "inlet.js",
     name: "inlet",
-    type: "js", 
+    type: "js",
     mode: "javascript",
   },
 
@@ -37,21 +37,47 @@ tributary.CodeModel = Backbone.Model.extend({
     }
   },
   handleNoError: function() {
+    tributary.events.trigger("noerror");
     tributary.__error__ = false;
   },
 
-  handleCoffee: function() {
+  handleCode: function() {
     //This checks if coffeescript is being used
     //and returns compiled javascript
-    var js = this.get("code");
+    var code = this.get("code");
     if(this.get("mode") === "coffeescript") {
       //compile the coffee
-      js = CoffeeScript.compile(js, {"bare":true});
+      js = CoffeeScript.compile(code, {"bare":true});
+      return js;
+    } else if (this.get("type") === "pde") {
+      js = Processing.compile(code).sourceCode;
+      return js;
+    }
+    return code;
+  },
+  //We allow parsing of code before execution
+  handleParser: function(js) {
+    //TODO: This is from plugin, should somehow be able to hook in here
+    var inline = tributary.__config__.get("inline-console");
+    if(inline) {
+      try {
+      transformed = tributary.__parser__(js, this.get("filename"));
+      } catch(e) {
+        if(tributary.trace)
+          console.log("PARSE", e.stack);
+      }
+      try {
+        js = escodegen.generate(transformed.ast);
+      } catch(e) {
+        if(tributary.trace)
+          console.log("GEN", e.stack)
+      }
+      if(tributary.trace) {
+        console.log("JS", js)
+      }
     }
     return js;
   },
- 
-
   //main use case of local storage is recovery after a crash
   //uniqueness comes from filename and optional user defined key
   local_storage: function(key) {

@@ -7,6 +7,8 @@ var _ = require("underscore");
 
 var Backbone = require("backbone");
 
+Backbone.$ = $;
+
 var Inlet = require("inlet");
 
 var cm = require("CodeMirror");
@@ -23,7 +25,7 @@ Tributary = function() {
   window.addEventListener("resize", function(event) {
     tributary.events.trigger("resize", event);
   });
-  tributary.__mainfiles__ = [ "inlet.js", "inlet.coffee", "sinwaves.js", "squarecircle.js" ];
+  tributary.__mainfiles__ = [ "inlet.js", "inlet.coffee", "inlet.pde", "sinwaves.js", "squarecircle.js" ];
   var reservedFiles = [ "_.md", "config.json" ];
   tributary.displays = [ {
     name: "svg",
@@ -83,6 +85,7 @@ Tributary = function() {
     model.set("type", type);
     if (tributary.__mainfiles__.indexOf(filename) >= 0) {
       if (type === "coffee") model.set("mode", "coffeescript");
+      if (type === "pde") tributary.__config__.set("display", "canvas");
       context = new tributary.TributaryContext({
         config: config,
         model: model,
@@ -120,6 +123,19 @@ Tributary = function() {
     } else if (type === "css") {
       model.set("mode", "css");
       context = new tributary.CSSContext({
+        config: config,
+        model: model
+      });
+    } else if (type === "styl") {
+      model.set("mode", "stylus");
+      context = new tributary.StylusContext({
+        config: config,
+        model: model
+      });
+    } else if (type === "pde") {
+      model.set("mode", "javascript");
+      tributary.__config__.set("display", "canvas");
+      context = new tributary.ProcessingContext({
         config: config,
         model: model
       });
@@ -215,14 +231,38 @@ Tributary = function() {
       }
     },
     handleNoError: function() {
+      tributary.events.trigger("noerror");
       tributary.__error__ = false;
     },
-    handleCoffee: function() {
-      var js = this.get("code");
+    handleCode: function() {
+      var code = this.get("code");
       if (this.get("mode") === "coffeescript") {
-        js = CoffeeScript.compile(js, {
+        js = CoffeeScript.compile(code, {
           bare: true
         });
+        return js;
+      } else if (this.get("type") === "pde") {
+        js = Processing.compile(code).sourceCode;
+        return js;
+      }
+      return code;
+    },
+    handleParser: function(js) {
+      var inline = tributary.__config__.get("inline-console");
+      if (inline) {
+        try {
+          transformed = tributary.__parser__(js, this.get("filename"));
+        } catch (e) {
+          if (tributary.trace) console.log("PARSE", e.stack);
+        }
+        try {
+          js = escodegen.generate(transformed.ast);
+        } catch (e) {
+          if (tributary.trace) console.log("GEN", e.stack);
+        }
+        if (tributary.trace) {
+          console.log("JS", js);
+        }
       }
       return js;
     },
@@ -255,7 +295,7 @@ Tributary = function() {
       restart: false,
       autoinit: true,
       pause: true,
-      loop_type: "period",
+      loop_type: "pingpong",
       bv: false,
       nclones: 15,
       clone_opacity: .4,
@@ -317,12 +357,16 @@ Tributary = function() {
         that.model.set("display", display);
         tributary.events.trigger("execute");
       });
-      var currentDisplay = this.model.get("display");
-      displaySelect.selectAll("option").each(function(d, i) {
-        if (this.value === currentDisplay) {
-          displaySelect.node().value = this.value;
-        }
-      });
+      this.model.on("change:display", updateDisplayMenu);
+      function updateDisplayMenu() {
+        var currentDisplay = that.model.get("display");
+        displaySelect.selectAll("option").each(function(d, i) {
+          if (this.value === currentDisplay) {
+            displaySelect.node().value = this.value;
+          }
+        });
+      }
+      updateDisplayMenu();
       var editorcontrols = d3.select(this.el);
       editorcontrols.select("#logerrors").on("click", function(d) {
         var dis = d3.select(this);
@@ -392,7 +436,9 @@ Tributary = function() {
             that.model.set("require", reqs);
           }
         });
-        li.append("span").text(function(d) {
+        li.append("a").attr("target", "_blank").attr("href", function(d) {
+          return d.url;
+        }).text(function(d) {
           return d.name;
         });
       }
@@ -433,10 +479,16 @@ Tributary = function() {
     execute: function() {
       if (tributary.__noupdate__) return;
       try {
-        var js = this.model.handleCoffee();
+        var js = this.model.handleCode();
+        js = this.model.handleParser(js);
       } catch (e) {
         this.model.trigger("error", e);
         return false;
+      }
+      if (this.model.get("type") === "pde") {
+        var fn = eval(js);
+        if (tributary.__processing__) tributary.__processing__.exit();
+        tributary.__processing__ = new Processing(tributary.canvas, fn);
       }
       try {
         tributary.initialize = new Function("g", "tributary", js);
@@ -449,11 +501,13 @@ Tributary = function() {
           tributary.clear();
           tributary.events.trigger("prerender");
         }
+        if (tributary.ctx && !tributary.g) {}
         tributary.initialize(tributary.g, tributary);
         if (tributary.autoinit && tributary.init !== undefined) {
           tributary.init(tributary.g, 0);
         }
         tributary.execute();
+        tributary.render();
       } catch (err) {
         this.model.trigger("error", err);
         return false;
@@ -475,6 +529,7 @@ Tributary = function() {
       } else if (display === "webgl") {
         this.make_webgl();
       } else if (display === "div") {
+        tributary.__svg__ = null;
         this.g = d3.select(this.el);
         tributary.g = this.g;
         tributary.clear = function() {
@@ -501,6 +556,7 @@ Tributary = function() {
       };
     },
     make_canvas: function() {
+      tributary.__svg__ = null;
       tributary.clear = function() {
         tributary.canvas.width = tributary.sw;
         tributary.canvas.height = tributary.sh;
@@ -511,16 +567,19 @@ Tributary = function() {
       tributary.g = tributary.ctx;
     },
     make_webgl: function() {
+      tributary.__svg__ = null;
       container = this.el;
       tributary.camera = new THREE.PerspectiveCamera(70, tributary.sw / tributary.sh, 1, 1e3);
       tributary.camera.position.y = 150;
       tributary.camera.position.z = 500;
       tributary.scene = new THREE.Scene;
+      tributary.scene.add(tributary.camera);
       THREE.Object3D.prototype.clear = function() {
         var children = this.children;
         var i;
         for (i = children.length - 1; i >= 0; i--) {
           var child = children[i];
+          if (child == tributary.camera) continue;
           child.clear();
           this.remove(child);
         }
@@ -528,8 +587,24 @@ Tributary = function() {
       tributary.renderer = new THREE.WebGLRenderer;
       tributary.renderer.setSize(tributary.sw, tributary.sh);
       container.appendChild(tributary.renderer.domElement);
+      var controls = new THREE.TrackballControls(tributary.camera);
+      controls.target.set(0, 0, 0);
+      controls.rotateSpeed = 1;
+      controls.zoomSpeed = .4;
+      controls.panSpeed = .8;
+      controls.noZoom = true;
+      controls.noPan = false;
+      controls.staticMoving = false;
+      controls.dynamicDampingFactor = .15;
+      tributary.useThreejsControls = true;
+      tributary.__threeControls__ = controls;
+      d3.timer(function() {
+        if (tributary.useThreejsControls && tributary.__threeControls__) {
+          tributary.__threeControls__.update();
+        }
+        tributary.render();
+      });
       tributary.render = function() {
-        if (tributary.useThreejsControls) {}
         tributary.renderer.render(tributary.scene, tributary.camera);
       };
       tributary.render();
@@ -552,6 +627,7 @@ Tributary = function() {
       this.model.on("change:code", function() {
         tributary.events.trigger("execute");
       });
+      tributary.events.on("prerender", this.execute, this);
     },
     execute: function() {
       if (tributary.__noupdate__) return;
@@ -573,10 +649,12 @@ Tributary = function() {
       this.model.on("change:code", function() {
         tributary.events.trigger("execute");
       });
+      tributary.events.on("prerender", this.execute, this);
     },
     execute: function() {
       if (tributary.__noupdate__) return;
       var js = this.model.get("code");
+      js = this.model.handleParser(js);
       try {
         eval(js);
       } catch (e) {
@@ -596,11 +674,12 @@ Tributary = function() {
       this.model.on("change:code", function() {
         tributary.events.trigger("execute");
       });
+      tributary.events.on("prerender", this.execute, this);
     },
     execute: function() {
       if (tributary.__noupdate__) return;
       try {
-        var js = this.model.handleCoffee();
+        var js = this.model.handleCode();
       } catch (err) {
         this.model.trigger("error", err);
         return false;
@@ -616,12 +695,38 @@ Tributary = function() {
     },
     render: function() {}
   });
+  tributary.ProcessingContext = tributary.Context.extend({
+    initialize: function() {
+      this.model.on("change:code", this.execute, this);
+      this.model.on("change:code", function() {
+        tributary.events.trigger("execute");
+      });
+      tributary.events.on("prerender", this.execute, this);
+    },
+    execute: function() {
+      if (tributary.__noupdate__) return;
+      var pde = this.model.get("code");
+      var js = Processing.compile(pde).sourceCode;
+      try {
+        var fn = eval(js);
+        if (tributary.__processing__) tributary.__processing__.exit();
+        tributary.__processing__ = new Processing(tributary.canvas, fn);
+      } catch (e) {
+        this.model.trigger("error", e);
+        return false;
+      }
+      this.model.trigger("noerror");
+      return true;
+    },
+    render: function() {}
+  });
   tributary.CSVContext = tributary.Context.extend({
     initialize: function() {
       this.model.on("change:code", this.execute, this);
       this.model.on("change:code", function() {
         tributary.events.trigger("execute");
       });
+      tributary.events.on("prerender", this.execute, this);
     },
     execute: function() {
       if (tributary.__noupdate__) return;
@@ -643,6 +748,7 @@ Tributary = function() {
       this.model.on("change:code", function() {
         tributary.events.trigger("execute");
       });
+      tributary.events.on("prerender", this.execute, this);
     },
     execute: function() {
       if (tributary.__noupdate__) return;
@@ -891,6 +997,7 @@ Tributary = function() {
     var ret = {};
     if (!data) {
       ret.config = new tributary.Config;
+      ret.config.newFile = true;
       ret.models = new tributary.CodeModels(new tributary.CodeModel);
       return callback(null, ret);
     }

@@ -50,6 +50,7 @@
 </head>
 <body>
 <div id="container">
+  {{#unless embedRoute}}
 	<header id="title">
   <h1>
     <a href="/inlet/" target="_blank">Tributary</a>
@@ -62,29 +63,35 @@
 			<span id="inlet-author">{{author}}</span>
 
 
+      {{#if inletRoute}}
 			<button id="save" title="Save current state" onclick='$(".icon-load").css("opacity", 1);'>Save</button>
 			<button id="fork" title="Save a copy" style="display:none;">Fork</button>
-
-			<!-- Export one day <button id="export"><i class="icon-export"></i></button> -->
-
 			<i class="icon-load animate-spin" style="opacity: 0;"></i>
+      {{/if}}
 		</section>
 
 
 
+    {{#if inletRoute}}
+    <button id="exit-fullscreen" style="display: none;">Exit fullscreen</button>
+      
 		<section id="login">
 			{{#if loggedin}}
-      <span id="current-user"><span class="user-avatar"><img id="user-avatar" class="avatar" src="{{avatar_url}}"/></span><span id="current-username">{{ user.name }}</span></span>
+      <span id="current-user">
+        <span class="user-avatar">
+          <img id="user-avatar" class="avatar" src="{{avatar_url}}"/>
+        </span>
+        <a id="current-username" href="http://tributary.io/s/6094415?user={{user.login}}">{{ user.name }}</a>
+      </span>
 			<button id="loginPanel">Log out</button>
       {{else}}
       <button id="loginPanel">Log in <i class="icon-github"></i></button>
       {{/if}}
-      
-      <button id="exit-fullscreen" style="display: none;">Exit fullscreen</button>
-
 		</section>
+    {{/if}}
 
 	</header>
+  {{/unless}}
 
   <iframe id="sandbox" src="{{ sandboxOrigin }}" frameBorder=0></iframe>
 
@@ -105,9 +112,12 @@
     header.avatar = "{{ user.avatar_url }}";
     header.userid = parseInt("{{user.id}}");
     //header.userurl = "{{ user.html_url }}";
-    header.userurl = "http://tributary.io/inlet/5088240?user={{user.login}}";
+    header.userurl = "http://tributary.io/s/6094415?user={{user.login}}";
     header.origin = "{{ sandboxOrigin }}";
     header.query = {{{query}}};
+    {{#unless inletRoute}}
+      header.fullscreen = true;
+    {{/unless}}
     
     
     $('i').tipsy({fade: true, gravity: 'n', opacity: 0.86});
@@ -115,7 +125,7 @@
 
 
   <!-- header.js sets up the header and does communication with child iframe -->
-  <script src='/static/header.js?v=0.8'></script>
+  <script src='/static/header.js?v=0.9'></script>
 
 </body>
 </html>

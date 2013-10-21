@@ -13,7 +13,7 @@ if(window) {
   function receiveMessage(event) {
     //console.log(event.origin, tributary._origin, event.data);
     if(event.origin !== tributary._origin || !event.data) return;
-    
+
     var data = event.data;
 
     if(data.request === "load") {
@@ -31,16 +31,22 @@ if(window) {
       //tributary.loadGist(data.gist, _assemble);
     } else if(data.request === "save") {
       //postMessage the host frame with the tributary.context information
-      var json = serializeGist();
-      event.source.postMessage({request: "save", config: json, salt: data.salt}, event.origin)
+      //get screenshot
+      if(!tributary.__config__.get("thumbnail")) {
+        tributary._screenshot();
+      } else {
+        var json = serializeGist();
+        event.source.postMessage({request: "save", config: json, salt: data.salt}, event.origin)
+      }
     } else if(data.request === "description") {
       //update the gist's description
       tributary.__config__.set("description", data.description);
     } else if( data.request === "exitfullscreen") {
-      tributary.events.trigger("fullscreen", false); 
+      tributary.events.trigger("fullscreen", false);
     } else if( data.request === "thumbnail" ) {
       //we have successful upload!
       var image = data.image;
+      d3.select("#thumb-load").transition().duration(1000).style("opacity",0);
       d3.select("#trib-thumbnail").attr("src", image.data.link);
       d3.select("#trib-thumbnail").style("display", "");
       tributary.__config__.set("thumbnail", image.data.link);
@@ -49,10 +55,6 @@ if(window) {
 
   //listen on window postMessage to load gist and handle save/forks
   window.addEventListener("message", receiveMessage, false)
-    
-
-    
-
 }
 
 //user has changed code, so let parent frame know not to let them leave too easy ;)
@@ -61,8 +63,10 @@ tributary.events.on("warnchanged", function() {
     parentWindow.postMessage({request: "warnchanged" }, tributary._origin);
 })
 tributary.events.on("imgur", function(img) {
-  if(parentWindow)
+  if(parentWindow)  {
+    d3.select("#thumb-load").style("opacity", 1);
     parentWindow.postMessage({request: "imgur", img: img }, tributary._origin);
+  }
 })
 
 //let the parent frame know we went fullsize so it can style itself accordingly
@@ -75,16 +79,17 @@ function goFullscreen() {
 
 tributary.ui.setup = function() {
   tributary.events.on("resize", function() {
-    if($("#display").width() > 767) {
-      tributary.sw = $("#display").width() - $("#panel").width();
+    if($("#container").width() > 767) {
+      tributary.sw = $("#container").width() - $("#panel").width();
     }
     else {
-      tributary.sw = $("#display").width();
+      tributary.sw = $("#container").width();
     }
 
     if ( $("#container").hasClass("fullscreen") ){
-      tributary.sw = $("#display").width();
+      tributary.sw = $("#container").width();
     }
+    $("#display").width(tributary.sw + "px");
     tributary.sh = $("#display").height();
 
     tributary.events.trigger("execute");
@@ -181,6 +186,7 @@ function _assemble(error, ret) {
       display: d3.select("#display")
     });
     if(context) {
+      if(config.newFile) context.newFile = true;
       config.contexts.push(context);
       context.render();
       if(tributary.__mainfiles__.indexOf(m.get("filename")) < 0) {
@@ -242,7 +248,7 @@ function _assemble(error, ret) {
   })
 
   function fullscreenEvent(fullscreen) {
-    if(fullscreen) {
+    if(fullscreen  || tributary.__fullscreen__) {
       config.set("fullscreen", true);
       $("#container").addClass("fullscreen")
       goFullscreen();
@@ -253,12 +259,12 @@ function _assemble(error, ret) {
       tributary.events.trigger("resize");
     }
   }
- 
+
   $("#fullscreen").on("click", function() { fullscreenEvent(true) });
   tributary.events.on("fullscreen", fullscreenEvent);
-  
+
   tributary.events.trigger("fullscreen", config.get("fullscreen"))
-    
+
   tributary.events.trigger("loaded");
 
 }
@@ -322,8 +328,8 @@ function getGist(id, callback) {
     dataType: 'json',
     success: function(data) { callback(null, data) },
     error: function(e) {
-      console.log(e)
-      //if a 403 error (because of rate limiting) 
+      console.log("err", e)
+      //if a 403 error (because of rate limiting)
       url = "/gist/" + id + cachebust;
       $.ajax({
         url: url,
@@ -331,12 +337,12 @@ function getGist(id, callback) {
         dataType: 'json',
         success: function(data) { callback(null, data) },
         error: function(er) {
-          console.log(er)
+          console.log("err", er)
           //OH NOES
           callback(er, null);
         }
       })
     },
-  }) 
+  })
 }
 

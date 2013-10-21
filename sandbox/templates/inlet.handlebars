@@ -33,6 +33,31 @@
 <link rel="stylesheet" href="/static/css/style.css" type="text/css" media="screen" title="Primary Stylesheet" charset="utf-8">
 
 <script src="/static/lib/html5slider.js"></script>
+{{#if embed }}
+<style>
+  body {
+    margin-top: -12px;
+    padding: 0;
+    border-radius: 0;
+  }
+  #display {
+    padding-top:0;
+    margin-top: 0;
+    border-radius: 0;
+  }
+  #gif {
+    display:none;
+  }
+</style>
+{{/if}}
+
+{{#if share }}
+<style>
+  #gif {
+    display:none;
+  }
+</style>
+{{/if}}
 
 </head>
 <body>
@@ -41,7 +66,7 @@
 	<section id="display">
 	</section>
   
-	<aside id="panel">
+  <aside id="panel" {{#if fullscreen}}class="hidden"{{/if}}>
 		<section id="files">
 			<ul id="file-list">
 			</ul>
@@ -73,6 +98,7 @@
         <div id="thumbnail-content">
           <h4>Add thumbnail <small><i class="explain-this-shit icon-help-circled"></i></small></h4>
           <img id="trib-thumbnail" style="display:none;"></img>
+          <i id="thumb-load" class="icon-load animate-spin" style="opacity: 0;" original-title=""></i>
           <input type="file" name="files[]" />
         </div>
 
@@ -115,30 +141,45 @@
 <script src="/static/lib/coffee-script.js"></script>
 <script src="/static/lib/jsonlint.js"></script>
 
+
 <!-- three.js should probably be done as a plugin -->
-<script src="/static/lib/three.min.js"></script>
+<!--<script src="/static/lib/three.min.js"></script>-->
+<script src="/static/lib/three.js"></script>
 <script src="/static/lib/Stats.js"></script>
 
 <!-- 3rd party libs we want available as global variables (should be libs in the add libraries list) -->
 <script src="/static/lib/underscore-min.js"></script>
 <script src="/static/lib/queue.min.js"></script>
-<!-- extra 3rd party libs 
+
+<!-- extra 3rd party libs
 TODO: add these as defualt libs in the list
 <script src="http://d3js.org/topojson.v0.min.js"></script>
 <script src="http://d3js.org/d3.geo.projection.v0.min.js"></script>
 -->
+<script src="/static/lib/gif.js"></script>
+<script src="/static/lib/stylus.js"></script>
+<script src="/static/lib/three-TrackballControls.js"></script>
+<script src="/static/lib/processing-1.4.1.js"></script>
+<script src="/static/lib/esprima.js"></script>
+<script src="/static/lib/escodegen.browser.js"></script>
 
 
 <!-- Tributary -->
-<script src="/static/tributary.min.js?v=0.8"></script>
+<script src="/static/tributary.min.js?v=0.9"></script>
 
 <!-- UI related -->
 <script src="/static/lib/handlebars-1.0.rc.1.js"></script>
 <script src="/static/templates.js"></script>
 <script src="/static/tributary-ui.min.js"></script>
 
+<!-- canvg for screenshots -->
+<script type="text/javascript" src="/static/plugins/screenshots/lib/rgbcolor.js"></script>
+<script type="text/javascript" src="/static/plugins/screenshots/lib/StackBlur.js"></script>
+<script type="text/javascript" src="/static/plugins/screenshots/lib/canvg.js"></script>
+<script type="text/javascript" src="/static/plugins/screenshots/lib/html2canvas.js"></script>
+
 <script type="text/javascript">
-  
+
 /*
 //get rid of selection when dragging things
 if(typeof document.body.style.MozUserSelect!="undefined")
@@ -153,20 +194,27 @@ document.body.style.cursor = "default";
 
 var tb = Tributary();
 tb._origin = "{{ origin }}";
+{{#if fullscreen}}tb.__fullscreen__ = {{ fullscreen }}; {{/if}}
 
 //decorate the tributary object with the ui logic
 TributaryUi(tb);
 
-tb.ui.setup();
+tb.loadPlugin("/static/plugins/stylus/plugin.json", {}, function(e) {
+  tb.loadPlugin("/static/plugins/inline-console/plugin.json", {}, function(e) {
+    tb.ui.setup();
+  });
+});
+
 
 tb.events.on("loaded", function() {
-  tb.loadPlugin("/static/plugins/play/plugin.json"
-  , {}
-  , function (err, pluginId) { /*console.log("plugin load err?", err)*/ 
-      tb.events.trigger("execute");
-    }
-  );
-  /*
+  tb.loadPlugin("/static/plugins/play/plugin.json", {}, function (err, pluginId) {
+      tb.loadPlugin("/static/plugins/screenshots/plugin.json", {}, function(e) {
+        tb.loadPlugin("/static/plugins/controls/plugin.json", {}, function(e) {
+        tb.events.trigger("execute");
+        });
+      });
+    });
+    /*
   //example simple plugin
   tb.loadPlugin("/static/plugins/simple/plugin.json"
   , {}

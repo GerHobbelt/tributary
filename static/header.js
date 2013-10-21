@@ -3,11 +3,22 @@
   var sandbox = d3.select("#sandbox").node().contentWindow;
 
   var _origin = header.origin;
-  
+
   //these "globals" are modified by the save/fork buttons and referenced
   //when we recieve a save request
   var salt;
-  var saveType;
+  var saveCallback = function(newurl, newgist) {
+    console.log("saved!")
+    d3.select(".icon-load").transition().duration(1000).style("opacity", 0)
+    if(saveType === "fork") {
+      window.onunload = false;
+      window.onbeforeunload = false;
+      if(newurl) {
+        //TODO: better error notifying
+        window.location = newurl;
+      }
+    }
+  };
   var saveCallback;
 
   //pass in gist data
@@ -18,8 +29,7 @@
   d3.select("#sandbox").node().onload = function() {
     sandbox.postMessage({request: "load", gistid: header.gistid, query: header.query}, _origin);
   }
-  
-  
+
   //Config object has everything we need to save our gist
   function getConfig() {
     salt = +new Date() + Math.random() * 99999999;
@@ -35,15 +45,19 @@
   }
   function setThumbnail(image) {
     sandbox.postMessage({request: "thumbnail", image: image}, _origin);
+    //only save the gist if it belongs to the user
+    if(header.gist && header.gist.user && header.username == header.gist.user.login) {
+      getConfig();
+    }
   }
 
   //on the load of the iframe, we want to get the gist (if any)
   //and then give it what it needs to fill out
   d3.select("#sandbox").on("load", function() {
+    load();
     if(header.gistid !== "" && header.gistid) {
-      getGist(header.gistid, load);
+      getGist(header.gistid, function(err) { if(err) console.log("err", err) });
     } else {
-      load(null, undefined);
       //this sets up the ui even tho we have no gist;
       handle_gist();
     }
@@ -64,7 +78,7 @@
       //user has modified code, so we want to warn them before leaving page
       if(!window.onbeforeunload) {
         $(window).on('beforeunload', function() {
-            return 'Are you sure you want to leave?';
+          return 'Are you sure you want to leave?';
         });
       }
     } else if( data.request === "fullscreen" ) {
@@ -93,7 +107,7 @@
       dataType: 'json',
       success: function(data) { handle_gist(data, callback) },
       error: function(e) {
-        console.log(e)
+        console.log("err", e)
         //if a 403 error (because of rate limiting) 
         url = "/gist/" + id + cachebust;
         $.ajax({
@@ -102,13 +116,13 @@
           dataType: 'json',
           success: function(data) { handle_gist(data, callback) },
           error: function(er) {
-            console.log(er)
+            console.log("err", er)
             //OH NOES
             callback(er, null);
           }
         })
       },
-    }) 
+    })
   }
 
   //callback when we get gist back, initiate setup of header and save panels
@@ -125,6 +139,7 @@
       setup_header(user);
       setup_save(user, !!data);
     } else {
+      header.gist = data;
       if(data.user === null || data.user === undefined) {
         user = anon;
       } else {
@@ -133,7 +148,7 @@
 
       setup_header(user, data.description);
       setup_save(user, !!data);
-      
+
       //send the data to the child frame
       callback(null, data);
     }
@@ -141,8 +156,9 @@
 
   function setup_header(gistUser, description) {
     if(gistUser) {
-      var profileUrl = "http://tributary.io/inlet/5088240?user=" + gistUser.login;
-      $("#inlet-author").html('<a href="' + profileUrl + '">' + gistUser.login + "</a>")
+      //old user page 5088240
+      var profileUrl = "http://tributary.io/s/6094415?user=" + gistUser.login;
+      $("#inlet-author").html('<a target="_blank" href="' + profileUrl + '">' + gistUser.login + "</a>")
       $("#gist-title").val(description)
 
       $("#author-avatar img").attr("src", function(d){
@@ -150,7 +166,7 @@
       })
 
       d3.select("title").text("Tributary | " + (description || "Inlet"))
-    } 
+    }
 
     $("#gist-title").on("keyup", function(){
       //console.log($("#gist-title").val());
@@ -238,7 +254,7 @@
   };
 
   function save(gist, saveorfork, callback) {
-    var oldgist = header.gistid || ""; 
+    var oldgist = header.gistid || "";
 
     var url;
     if(saveorfork === "fork") {
@@ -254,13 +270,13 @@
 
     var that = this;
     $.post(url, {"gist":JSON.stringify(gist)}, function(data) {
-        if(typeof(data) === "string") {
-          data = JSON.parse(data);
-        }
-        //TODO: add in error checking
-        var newgist = data.id;
-        var newurl = "/inlet/" + newgist;
-        callback(newurl, newgist);
+      if(typeof(data) === "string") {
+        data = JSON.parse(data);
+      }
+      //TODO: add in error checking
+      var newgist = data.id;
+      var newurl = "/inlet/" + newgist;
+      callback(newurl, newgist);
     });
   };
 
@@ -271,9 +287,8 @@
         setThumbnail(image);
       } else {
         //oops
+        //getConfig();
       }
     })
   }
-
-
 })();

@@ -5,6 +5,8 @@ var request = require('request');
 
 var port = settings.port || 8888;
 var sandboxOrigin = settings.sandboxOrigin || "http://sandbox.localhost:8888";
+var shareSandboxOrigin = sandboxOrigin + "/s";
+var embedSandboxOrigin = sandboxOrigin + "/e";
 
 //SERVER SIDE TEMPLATES
 GLOBAL.Handlebars = require('handlebars');
@@ -34,7 +36,6 @@ var $visits = db.collection("visits");
 var $images = db.collection("images");
 
 
-
 var app = express()
   .use(express.cookieParser())
   .use(express.bodyParser())
@@ -44,7 +45,7 @@ var app = express()
     store: new MongoStore(mongoConf)
   }))
   .use('/static', express.static(__dirname + '/static'))
-  
+
 app.use(express.vhost('sandbox.' + settings.hostname || "localhost", require(__dirname + '/sandbox').app))
 
 
@@ -67,7 +68,11 @@ function getgist_endpoint(req, res, next) {
       res.header("Content-Type", 'application/json');
       res.send(body);
     } else {
-      res.send(response.statusCode);
+      if(response) {
+        res.send({error: error, status: response.statusCode});
+      } else {
+        res.send(error)
+      }
     }
   })
 }
@@ -92,6 +97,8 @@ app.get('/tributary/:gistid', inlet)
 app.get('/tributary/:gistid/:filename', inlet)
 app.get('/delta/:gistid', inlet)
 app.get('/delta/:gistid/:filename', inlet)
+app.get('/s/:gistid', inlet)
+app.get('/e/:gistid', inlet)
 function inlet(req,res,next) {
   var gistid = req.params['gistid'];
   var user = req.session.user;
@@ -115,15 +122,26 @@ function inlet(req,res,next) {
   } catch(e) {
     var query = "";
   }
+
   var template = Handlebars.templates.header;
-  var html = template({
+  var context = {
     user: user,
     avatar_url: user? user.avatar_url : "",
     loggedin: user ? true : false,
     gistid: gistid,
     query: query,
-    sandboxOrigin: sandboxOrigin
-  });
+  };
+  if(req.route.path === '/s/:gistid') {
+    context.shareRoute = true;
+    context.sandboxOrigin = shareSandboxOrigin
+  } else if(req.route.path === '/e/:gistid') {
+    context.embedRoute = true;
+    context.sandboxOrigin = embedSandboxOrigin
+  } else {
+    context.inletRoute = true;
+    context.sandboxOrigin = sandboxOrigin
+  }
+  var html = template(context);
   res.send(html);
 }
 
@@ -367,16 +385,18 @@ function after_save(gist, callback) {
   //if gist doesn't exist in mongo, we create it, otherwise we update it.
   $inlets.findOne({gistid: gist.id}, function(err, mgist) {
     if(!mgist) {
-      mgist = { 
+      mgist = {
         gistid: gist.id
       , createdAt: new Date()
       , description: gist.description
       , public: newgist['public']
       }
     }
-    mgist.user = {
-      id: gist.user.id
-    , login: gist.user.login
+    if(gist.user) {
+      mgist.user = {
+        id: gist.user.id
+      , login: gist.user.login
+      }
     }
     mgist.description = gist.description
 
@@ -398,22 +418,36 @@ function after_save(gist, callback) {
 app.get("/github-authenticated", github_authenticated)
 function github_authenticated(req,res,next) {
     var tempcode = req.query.code || '';
-    var data = {'client_id': settings.GITHUB_CLIENT_ID, 'client_secret': settings.GITHUB_CLIENT_SECRET, 'code': tempcode }
-    var headers = { 
+    var data = {
+      'client_id': settings.GITHUB_CLIENT_ID,
+      'client_secret': settings.GITHUB_CLIENT_SECRET,
+      'code': tempcode
+    }
+    var headers = {
       'User-Agent': 'tributary'
-    , 'content-type': 'application/json'
+    //, 'content-type': 'application/json'
     , 'accept': 'application/json'
     }
+    //well, github just decided that it didn't want json payload anymore...
+    var url = 'https://github.com/login/oauth/access_token';
+    url += "?client_id=" + data.client_id;
+    url += "&client_secret=" + data.client_secret;
+    url += "&code=" + data.code;
 
     // request an access token
     request({
-      url:'https://github.com/login/oauth/access_token',
-      json: data,
+      url: url,
+      method: "POST",
       headers: headers
     }, function(error, response, body) {
       if (!error && response.statusCode == 200) {
-        var access_token = body.access_token;
-        req.session.access_token = access_token;
+        var access_token;
+        try {
+          access_token = JSON.parse(body).access_token;
+          req.session.access_token = access_token;
+        } catch (e) {
+          return res.redirect('/404')
+        }
 
         request({
           url: "https://api.github.com/user?access_token=" + access_token
@@ -438,6 +472,7 @@ function github_authenticated(req,res,next) {
 
       } else {
         console.log("authentication error!", error);
+        res.redirect('/404')
       }
     })
 }
@@ -535,6 +570,43 @@ function imgur_upload(req,res,next) {
 
 
 //API
+function find_inlet(gistid, callback){
+  var query = {
+    "gistid": gistid
+    , public: { $ne: false }
+  };
+  $inlets.findOne(query, callback);
+}
+ 
+app.get('/api/inlet/:gistid', get_inlet_family)
+function get_inlet_family(req, res, next){
+  res.header("Access-Control-Allow-Origin", "*");
+  find_inlet(req.params.gistid, function(err, foundInlet) {
+    if (err) res.send(err);
+    // Fill in the parent of foundInlet the first time through
+    getParent(foundInlet, foundInlet, res);
+  });
+}
+ 
+function getParent(foundInlet, inlet, res){
+  // 'foundInlet' is only used with res.send()
+  // 'inlet' is the current inlet having its parent filled in.
+  // The first time the function is called the two are the same.
+  if(!inlet) return res.send(404);
+  if (inlet.parent){
+      find_inlet(inlet.parent, function(err, foundParentInlet){
+        if (err) res.send(err);
+        inlet.parent = foundParentInlet;
+        // Recurse and fill in the parent of 'inlet'
+        // Pass the original 'foundInlet' along too.
+        getParent(foundInlet, inlet.parent, res)
+      });
+    }
+    else {
+      // When the recursion is complete, return the original 'foundInlet'
+      res.send(foundInlet);
+    }
+}
 
 app.get('/api/latest/created', latest_created)
 app.get('/api/latest/created/:limit', latest_created)
@@ -621,15 +693,17 @@ function api_users(req,res,next) {
 
 app.get('/api/user/:login/latest', user_latest)
 app.get('/api/user/:login/latest/:limit', user_latest)
+app.get('/api/user/:login/latest/:limit/:skip', user_latest)
 function user_latest(req,res,next) {
   res.header("Access-Control-Allow-Origin", "*");
-  var query = { 
-    "user.login": req.params.login 
+  var skip = req.params.skip || 0
+  var query = {
+    "user.login": req.params.login
   , public: { $ne: false }
   };
   //TODO: pagination
   var limit = req.params.limit || 200;
-  $inlets.find(query, {limit: limit}).sort({ createdAt: -1 }).toArray(function(err, inlets) {
+  $inlets.find(query, {limit: limit, skip: skip}).sort({ createdAt: -1 }).toArray(function(err, inlets) {
     if(err) res.send(err);
     res.send(inlets);
   })

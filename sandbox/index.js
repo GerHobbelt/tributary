@@ -15,11 +15,35 @@ require('./templates/sandbox-templates');
 app.get("/", index);
 function index(req, res, next) {
   var template = Handlebars.templates.inlet;
-  var html = template({ 
-    origin: origin
+  var html = template({
+    origin: origin,
+    fullscreen: false
   });
   res.send(html);
 };
+app.get("/s", share);
+function share(req, res, next) {
+  var template = Handlebars.templates.inlet;
+  var html = template({
+    origin: origin,
+    fullscreen: true,
+    share: true,
+    embed: false
+  });
+  res.send(html);
+};
+app.get("/e", embed);
+function embed(req, res, next) {
+  var template = Handlebars.templates.inlet;
+  var html = template({
+    origin: origin,
+    fullscreen: true,
+    embed: true
+  });
+  res.send(html);
+};
+
+
 
 //API endpoint for fetching a gist from github
 app.get("/gist/:gistid", getgist_endpoint);

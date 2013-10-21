@@ -27,7 +27,6 @@ tributary.TributaryContext = tributary.Context.extend({
         tributary.__config__ = new tributary.Config();
       }
     }
-    
 
     //if the user has modified the code, we want to protect them from losing their work
     this.model.on("change:code", function() {
@@ -43,24 +42,30 @@ tributary.TributaryContext = tributary.Context.extend({
 
     tributary.init = undefined;
     tributary.run = undefined;
-  
+
     //autoinit determins whether we call tributary.init by default
     tributary.autoinit = config.get("autoinit");
 
     tributary.render = function() {};
     tributary.execute = function() {};
-     
+
   },
 
-  execute: function() {   
+  execute: function() {
     if(tributary.__noupdate__) return;
     try {
-      var js = this.model.handleCoffee();
+      var js = this.model.handleCode();
+      js = this.model.handleParser(js)
     } catch (e) {
       this.model.trigger("error", e);
       return false;
     }
 
+    if(this.model.get("type") === "pde") {
+      var fn = eval(js);
+      if(tributary.__processing__) tributary.__processing__.exit();
+      tributary.__processing__ = new Processing(tributary.canvas, fn);
+    }
     try {
       //eval(js);
       tributary.initialize = new Function("g", "tributary", js);
@@ -77,6 +82,10 @@ tributary.TributaryContext = tributary.Context.extend({
         //call anything that needs to be prerendered (SVG and HTML contexts)
         tributary.events.trigger("prerender");
       }
+      if(tributary.ctx && !tributary.g) {
+        //somehow tributary.g ends up undefined...
+      //  tributary.g = tributary.ctx;
+      }
 
       //execute the code
       tributary.initialize(tributary.g, tributary);
@@ -86,6 +95,7 @@ tributary.TributaryContext = tributary.Context.extend({
       }
       //then we run the user defined run function
       tributary.execute();
+      tributary.render();
     } catch (err) {
         this.model.trigger("error", err);
         return false;
@@ -107,10 +117,11 @@ tributary.TributaryContext = tributary.Context.extend({
     if(display === "svg") {
       this.make_svg();
     } else if (display === "canvas") {
-      this.make_canvas(); 
+      this.make_canvas();
     } else if (display === "webgl") {
       this.make_webgl();
     } else if (display === "div") {
+      tributary.__svg__ = null;
       this.g = d3.select(this.el);
       tributary.g = this.g;
       tributary.clear = function() {
@@ -146,6 +157,7 @@ tributary.TributaryContext = tributary.Context.extend({
   },
 
   make_canvas: function() {
+    tributary.__svg__ = null;
     tributary.clear = function() {
       //var sw = parseInt(d3.select("#display").style("width"));
       //var sh = parseInt(d3.select("#display").style("height"));
@@ -159,10 +171,10 @@ tributary.TributaryContext = tributary.Context.extend({
       .node();
     tributary.ctx = tributary.canvas.getContext('2d');
     tributary.g = tributary.ctx;
-
   },
 
   make_webgl: function() {
+    tributary.__svg__ = null;
     container = this.el;
 
     tributary.camera = new THREE.PerspectiveCamera( 70, tributary.sw / tributary.sh, 1, 1000 );
@@ -170,12 +182,14 @@ tributary.TributaryContext = tributary.Context.extend({
     tributary.camera.position.z = 500;
 
     tributary.scene = new THREE.Scene();
+    tributary.scene.add( tributary.camera )
 
     THREE.Object3D.prototype.clear = function(){
       var children = this.children;
       var i;
       for(i = children.length-1;i>=0;i--){
         var child = children[i];
+        if(child == tributary.camera) continue;
         child.clear();
         this.remove(child);
       }
@@ -186,40 +200,33 @@ tributary.TributaryContext = tributary.Context.extend({
 
     container.appendChild( tributary.renderer.domElement );
 
-    /*
-    stats = new Stats();
-    stats.domElement.style.position = 'absolute';
-    stats.domElement.style.right = '0px';
-    stats.domElement.style.top = '0px';
-    container.appendChild( stats.domElement );
-    */
-    //tributary.renderer.render( tributary.scene, tributary.camera );
-
-    /*
     var controls = new THREE.TrackballControls( tributary.camera );
     controls.target.set( 0, 0, 0 );
     controls.rotateSpeed = 1.0;
-    controls.zoomSpeed = 1.2;
+    controls.zoomSpeed = 0.4;
     controls.panSpeed = 0.8;
 
-    controls.noZoom = false;
+    controls.noZoom = true;
     controls.noPan = false;
 
     controls.staticMoving = false;
     controls.dynamicDampingFactor = 0.15;
 
-    tributary.controls = controls;
-    */
-    
+    tributary.useThreejsControls = true;
+    tributary.__threeControls__ = controls;
 
-    tributary.render = function() {
-      if(tributary.useThreejsControls) {
-        //tributary.controls.update();
+    d3.timer(function() {
+      if(tributary.useThreejsControls && tributary.__threeControls__) {
+        tributary.__threeControls__.update();
       }
+      tributary.render();
+    })
+    tributary.render = function() {
+
       tributary.renderer.render( tributary.scene, tributary.camera );
     };
     tributary.render();
-    
+
     function onWindowResize() {
 
       windowHalfX = tributary.sw / 2;
@@ -237,15 +244,13 @@ tributary.TributaryContext = tributary.Context.extend({
     tributary.clear = function() {
       tributary.scene.clear();
     };
-
   }
-
 });
 
 
 //JSON Context
 //The JSON context evaluates json and sets the result to
-//tributary.foo where foo is the name of the context 
+//tributary.foo where foo is the name of the context
 //i.e. the filename without the extension
 tributary.JSONContext = tributary.Context.extend({
 
@@ -254,6 +259,7 @@ tributary.JSONContext = tributary.Context.extend({
     this.model.on("change:code", function() {
       tributary.events.trigger("execute");
     });
+    tributary.events.on("prerender", this.execute, this);
   },
 
   execute: function() {
@@ -285,11 +291,13 @@ tributary.JSContext = tributary.Context.extend({
     this.model.on("change:code", function() {
       tributary.events.trigger("execute");
     });
+    tributary.events.on("prerender", this.execute, this);
   },
 
   execute: function() {
     if(tributary.__noupdate__) return;
     var js = this.model.get("code");
+    js = this.model.handleParser(js)
 
     try {
       eval(js);
@@ -318,12 +326,13 @@ tributary.CoffeeContext = tributary.Context.extend({
     this.model.on("change:code", function() {
       tributary.events.trigger("execute");
     });
+    tributary.events.on("prerender", this.execute, this);
   },
 
   execute: function() {
     if(tributary.__noupdate__) return;
     try {
-      var js = this.model.handleCoffee();
+      var js = this.model.handleCode();
     } catch(err) {
       this.model.trigger("error", err);
       return false;
@@ -367,6 +376,41 @@ tributary.CoffeeContext = tributary.Context.extend({
 
 });
 
+//processing context
+tributary.ProcessingContext = tributary.Context.extend({
+  initialize: function() {
+    this.model.on("change:code", this.execute, this);
+    this.model.on("change:code", function() {
+      tributary.events.trigger("execute");
+    });
+    tributary.events.on("prerender", this.execute, this);
+  },
+
+  execute: function() {
+    if(tributary.__noupdate__) return;
+    var pde = this.model.get("code");
+    var js = Processing.compile(pde).sourceCode;
+
+    try {
+      var fn = eval(js);
+      if(tributary.__processing__) tributary.__processing__.exit();
+      tributary.__processing__ = new Processing(tributary.canvas, fn);
+    } catch (e) {
+      this.model.trigger("error", e);
+      return false;
+    }
+    this.model.trigger("noerror");
+
+    return true;
+  },
+
+  render: function() {
+    //JS context doesn't do anything on rendering
+  },
+
+});
+
+
 
 //The CSV context evaluates js in the global namespace
 tributary.CSVContext = tributary.Context.extend({
@@ -375,6 +419,7 @@ tributary.CSVContext = tributary.Context.extend({
     this.model.on("change:code", function() {
       tributary.events.trigger("execute");
     });
+    tributary.events.on("prerender", this.execute, this);
   },
 
   execute: function() {
@@ -403,6 +448,7 @@ tributary.TSVContext = tributary.Context.extend({
     this.model.on("change:code", function() {
       tributary.events.trigger("execute");
     });
+    tributary.events.on("prerender", this.execute, this);
   },
 
   execute: function() {

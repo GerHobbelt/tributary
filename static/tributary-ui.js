@@ -1,5 +1,7 @@
 var Backbone = require("backbone");
 
+Backbone.$ = $;
+
 TributaryUi = function(tributary) {
   if (!tributary.ui) {
     tributary.ui = {};
@@ -22,18 +24,23 @@ TributaryUi = function(tributary) {
         parentWindow = event.source;
         tributary.query = data.query;
       } else if (data.request === "save") {
-        var json = serializeGist();
-        event.source.postMessage({
-          request: "save",
-          config: json,
-          salt: data.salt
-        }, event.origin);
+        if (!tributary.__config__.get("thumbnail")) {
+          tributary._screenshot();
+        } else {
+          var json = serializeGist();
+          event.source.postMessage({
+            request: "save",
+            config: json,
+            salt: data.salt
+          }, event.origin);
+        }
       } else if (data.request === "description") {
         tributary.__config__.set("description", data.description);
       } else if (data.request === "exitfullscreen") {
         tributary.events.trigger("fullscreen", false);
       } else if (data.request === "thumbnail") {
         var image = data.image;
+        d3.select("#thumb-load").transition().duration(1e3).style("opacity", 0);
         d3.select("#trib-thumbnail").attr("src", image.data.link);
         d3.select("#trib-thumbnail").style("display", "");
         tributary.__config__.set("thumbnail", image.data.link);
@@ -47,10 +54,13 @@ TributaryUi = function(tributary) {
     }, tributary._origin);
   });
   tributary.events.on("imgur", function(img) {
-    if (parentWindow) parentWindow.postMessage({
-      request: "imgur",
-      img: img
-    }, tributary._origin);
+    if (parentWindow) {
+      d3.select("#thumb-load").style("opacity", 1);
+      parentWindow.postMessage({
+        request: "imgur",
+        img: img
+      }, tributary._origin);
+    }
   });
   function goFullscreen() {
     if (parentWindow) parentWindow.postMessage({
@@ -59,14 +69,15 @@ TributaryUi = function(tributary) {
   }
   tributary.ui.setup = function() {
     tributary.events.on("resize", function() {
-      if ($("#display").width() > 767) {
-        tributary.sw = $("#display").width() - $("#panel").width();
+      if ($("#container").width() > 767) {
+        tributary.sw = $("#container").width() - $("#panel").width();
       } else {
-        tributary.sw = $("#display").width();
+        tributary.sw = $("#container").width();
       }
       if ($("#container").hasClass("fullscreen")) {
-        tributary.sw = $("#display").width();
+        tributary.sw = $("#container").width();
       }
+      $("#display").width(tributary.sw + "px");
       tributary.sh = $("#display").height();
       tributary.events.trigger("execute");
     });
@@ -131,6 +142,7 @@ TributaryUi = function(tributary) {
         display: d3.select("#display")
       });
       if (context) {
+        if (config.newFile) context.newFile = true;
         config.contexts.push(context);
         context.render();
         if (tributary.__mainfiles__.indexOf(m.get("filename")) < 0) {
@@ -178,7 +190,7 @@ TributaryUi = function(tributary) {
       }
     });
     function fullscreenEvent(fullscreen) {
-      if (fullscreen) {
+      if (fullscreen || tributary.__fullscreen__) {
         config.set("fullscreen", true);
         $("#container").addClass("fullscreen");
         goFullscreen();
@@ -233,7 +245,7 @@ TributaryUi = function(tributary) {
         callback(null, data);
       },
       error: function(e) {
-        console.log(e);
+        console.log("err", e);
         url = "/gist/" + id + cachebust;
         $.ajax({
           url: url,
@@ -243,7 +255,7 @@ TributaryUi = function(tributary) {
             callback(null, data);
           },
           error: function(er) {
-            console.log(er);
+            console.log("err", er);
             callback(er, null);
           }
         });
@@ -292,23 +304,25 @@ TributaryUi = function(tributary) {
           return d.model.get("filename") === filename;
         });
         context.model.trigger("delete");
-        var ind = config.contexts.indexOf(context);
-        config.contexts.splice(ind, 1);
-        delete context;
         if (!config.todelete) {
           config.todelete = [];
         }
-        config.todelete.push(filename);
+        if (!context.newFile) config.todelete.push(filename);
+        var ind = config.contexts.indexOf(context);
+        config.contexts.splice(ind, 1);
+        delete context;
         d3.select(that.el).selectAll("li.file").each(function() {
           if (this.dataset.filename === filename) {
             $(this).remove();
           }
         });
+        config.contexts.forEach(function(c) {
+          return c.model.trigger("hide");
+        });
         var othertab = config.contexts[0].model;
         othertab.trigger("show");
         d3.event.stopPropagation();
       });
-      console.log("supppp");
       var plus = d3.select(this.el).select(".add-file").on("click", function() {
         var input = d3.select(this).select("input").style("display", "inline-block");
         input.node().focus();
@@ -323,6 +337,7 @@ TributaryUi = function(tributary) {
               config: config
             });
             if (context) {
+              context.newFile = true;
               config.contexts.push(context);
               context.render();
               context.execute();

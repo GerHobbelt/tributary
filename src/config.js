@@ -18,7 +18,7 @@ tributary.Config = Backbone.Model.extend({
       //time options
       autoinit: true,
       pause: true,
-      loop_type: "period", //["off", "period", "pingpong"]
+      loop_type: "pingpong", //["off", "period", "pingpong"]
       bv: false,
       nclones: 15,
       clone_opacity: 0.4,
@@ -133,16 +133,19 @@ tributary.ConfigView = Backbone.View.extend({
         tributary.events.trigger("execute");
       })
 
-    var currentDisplay = this.model.get("display");
-    displaySelect.selectAll("option")
-      .each(function(d,i) {
-        if(this.value === currentDisplay) {
-          //d3.select(this).attr("selected", "selected")
-         displaySelect.node().value= this.value;
-        }
-      })
-    
-    
+    this.model.on("change:display", updateDisplayMenu)
+    function updateDisplayMenu() {
+      var currentDisplay = that.model.get("display");
+      displaySelect.selectAll("option")
+        .each(function(d,i) {
+          if(this.value === currentDisplay) {
+            //d3.select(this).attr("selected", "selected")
+           displaySelect.node().value= this.value;
+          }
+        })
+    }
+    updateDisplayMenu();
+
     // Editor controls config section
 
     var editorcontrols = d3.select(this.el)
@@ -185,8 +188,7 @@ tributary.ConfigView = Backbone.View.extend({
             dis.classed("active", true)
           }
        // }
-      })
-
+      }) 
 
 
     // Require / External files config section
@@ -246,7 +248,10 @@ tributary.ConfigView = Backbone.View.extend({
             that.model.set("require", reqs);
           }
         })
-      li.append("span").text(function(d) {
+      li.append("a")
+      .attr("target", "_blank")
+      .attr("href", function(d) { return d.url })
+      .text(function(d) {
         return d.name;
       })
 
