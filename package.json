@@ -28,7 +28,7 @@
     "connect-mongo": "0.1.x",
     "d3":"3.1.4",
     "inlet":"git://github.com/enjalot/Inlet.git",
-    "underscore":"1.4.4",
+    "underscore":"1.12.1",
     "jquery":"*",
     "jquery-browserify":"*",
     "backbone":"1.0.0",
